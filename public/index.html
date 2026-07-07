@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bot WhatsApp - Panel</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a1a; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .container { text-align: center; max-width: 500px; padding: 40px; }
+    .logo { font-size: 48px; margin-bottom: 10px; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    .subtitle { color: #888; margin-bottom: 30px; }
+    #qr-container { background: #fff; border-radius: 16px; padding: 20px; display: inline-block; min-width: 280px; min-height: 280px; display: flex; align-items: center; justify-content: center; }
+    #qr-container img { max-width: 260px; max-height: 260px; }
+    #qr-placeholder { color: #666; font-size: 14px; }
+    .status-bar { margin-top: 24px; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; }
+    .status-connecting { background: #1a1a2e; color: #ffd700; border: 1px solid #333; }
+    .status-ready { background: #0a2e1a; color: #00ff88; border: 1px solid #00ff8833; }
+    .status-error { background: #2e0a0a; color: #ff4444; border: 1px solid #ff444433; }
+    .status-qr { background: #1a1a2e; color: #4488ff; border: 1px solid #4488ff33; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .info { margin-top: 20px; color: #555; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">🤖</div>
+    <h1>Bot WhatsApp</h1>
+    <p class="subtitle">Agencia Nexus - Panel de Control</p>
+
+    <div id="qr-container">
+      <p id="qr-placeholder" class="pulse">Esperando QR...</p>
+    </div>
+
+    <div id="status-bar" class="status-bar status-connecting pulse">
+      Iniciando servidor...
+    </div>
+
+    <p class="info" id="server-info"></p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const qrContainer = document.getElementById('qr-container');
+    const statusBar = document.getElementById('status-bar');
+    const serverInfo = document.getElementById('server-info');
+    const qrPlaceholder = document.getElementById('qr-placeholder');
+
+    socket.on('qr-code', (dataURL) => {
+      qrContainer.innerHTML = `<img src="${dataURL}" alt="QR Code">`;
+      statusBar.className = 'status-bar status-qr';
+      statusBar.textContent = 'Escanea el codigo QR con WhatsApp';
+    });
+
+    socket.on('status', (st) => {
+      switch (st) {
+        case 'starting':
+          statusBar.className = 'status-bar status-connecting pulse';
+          statusBar.textContent = 'Iniciando servidor...';
+          break;
+        case 'qr':
+          statusBar.className = 'status-bar status-qr';
+          statusBar.textContent = 'Escanea el codigo QR con WhatsApp';
+          break;
+        case 'ready':
+          statusBar.className = 'status-bar status-ready';
+          statusBar.textContent = 'WhatsApp conectado ✓';
+          qrContainer.innerHTML = '<p style="color: #00ff88; font-size: 48px;">✓</p>';
+          break;
+        case 'reconnecting':
+          statusBar.className = 'status-bar status-connecting pulse';
+          statusBar.textContent = 'Reconectando...';
+          break;
+        case 'error':
+          statusBar.className = 'status-bar status-error';
+          statusBar.textContent = 'Error - Revisa los logs';
+          break;
+        case 'logged_out':
+          statusBar.className = 'status-bar status-error';
+          statusBar.textContent = 'Sesion cerrada - Elimina auth_info/';
+          break;
+        default:
+          statusBar.className = 'status-bar status-connecting';
+          statusBar.textContent = st;
+      }
+    });
+
+    fetch('/status').then(r => r.json()).then(data => {
+      serverInfo.textContent = `Node ${data.node} | ${data.platform} | ${data.memory} | Uptime: ${Math.round(data.uptime)}s`;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "botprueba200",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "qrcode": "^1.5.4",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
+    "dotenv": "^17.4.2"
+  }
+}
