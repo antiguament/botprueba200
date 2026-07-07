@@ -40,25 +40,29 @@ const MIN_RECONNECT_INTERVAL = 10000;
 
 const AUTH_DIR = path.join(__dirname, 'auth_info');
 const LOCK_FILE = path.join(__dirname, '.bot.lock');
+const DEPLOY_MARKER = path.join(__dirname, '.deploy.marker');
+const MY_START_TIME = Date.now();
 
 // ===== LOCK FILE =====
 function acquireLock() {
   if (fs.existsSync(LOCK_FILE)) {
     try {
       const content = fs.readFileSync(LOCK_FILE, 'utf8').trim();
-      const pid = parseInt(content);
-      const stat = fs.statSync(LOCK_FILE);
-      const lockAge = Date.now() - stat.mtimeMs;
+      const parts = content.split('|');
+      const pid = parseInt(parts[0]);
+      const lockTime = parseInt(parts[1]) || 0;
 
       if (pid === process.pid) return true;
 
-      if (lockAge > 120000) {
-        log('Lock: stale (>2min). Limpiando automaticamente.');
+      // Lock viejo: proceso muerto O heartbeat >60s
+      const heartbeat = Date.now() - lockTime;
+      if (heartbeat > 60000) {
+        log(`Lock: heartbeat viejo (${Math.round(heartbeat/1000)}s). Forzando takeover.`);
         try { fs.unlinkSync(LOCK_FILE); } catch {}
       } else {
         try {
           process.kill(pid, 0);
-          log(`Lock: proceso ${pid} activo. Esta instancia NO arrancara WhatsApp.`);
+          log(`Lock: proceso ${pid} activo (heartbeat ${Math.round(heartbeat/1000)}s). Esperando...`);
           return false;
         } catch {
           log('Lock: proceso anterior muerto. Limpiando lock.');
@@ -69,18 +73,55 @@ function acquireLock() {
       try { fs.unlinkSync(LOCK_FILE); } catch {}
     }
   }
-  fs.writeFileSync(LOCK_FILE, String(process.pid));
+  // Escribir PID|timestamp
+  fs.writeFileSync(LOCK_FILE, `${process.pid}|${Date.now()}`);
   log(`Lock: PID ${process.pid} registrado.`);
   return true;
+}
+
+function heartbeatLock() {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const content = fs.readFileSync(LOCK_FILE, 'utf8').trim();
+      const pid = parseInt(content.split('|')[0]);
+      if (pid === process.pid) {
+        fs.writeFileSync(LOCK_FILE, `${process.pid}|${Date.now()}`);
+      }
+    }
+  } catch {}
 }
 
 function releaseLock() {
   try {
     if (fs.existsSync(LOCK_FILE)) {
-      const pid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+      const content = fs.readFileSync(LOCK_FILE, 'utf8').trim();
+      const pid = parseInt(content.split('|')[0]);
       if (pid === process.pid) fs.unlinkSync(LOCK_FILE);
     }
   } catch {}
+}
+
+// Deploy marker: nueva instancia avisa a la vieja que debe apagarse
+function writeDeployMarker() {
+  try { fs.writeFileSync(DEPLOY_MARKER, `${process.pid}|${Date.now()}`); } catch {}
+}
+
+function checkDeployMarker() {
+  try {
+    if (fs.existsSync(DEPLOY_MARKER)) {
+      const content = fs.readFileSync(DEPLOY_MARKER, 'utf8').trim();
+      const markerTime = parseInt(content.split('|')[1]) || 0;
+      if (markerTime > MY_START_TIME) {
+        log('Deploy marker detectado: nueva instancia activa. Apagando...');
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+function clearDeployMarker() {
+  try { fs.unlinkSync(DEPLOY_MARKER); } catch {}
 }
 
 process.on('exit', releaseLock);
@@ -173,14 +214,46 @@ async function startBot() {
     return;
   }
 
+  // Si hay otra instancia y no podemos tomar el lock, escribir deploy marker y esperar
   if (!acquireLock()) {
-    log('Otra instancia tiene el lock. WhatsApp NO se iniciara.');
-    status = 'error';
-    io.emit('status', 'Otra instancia activa. Espera a que libere el puerto.');
-    return;
+    log('Otra instancia tiene el lock. Escribiendo deploy marker...');
+    writeDeployMarker();
+
+    // Reintentar cada 5s hasta que la vieja se apague (max 30s)
+    for (let i = 0; i < 6; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      if (acquireLock()) {
+        log('Lock adquirido despues de esperar.');
+        clearDeployMarker();
+        break;
+      }
+      log(`Esperando takeover... (${i+1}/6)`);
+    }
+
+    if (!acquireLock()) {
+      log('No se pudo tomar el lock. Esta instancia se cierra.');
+      status = 'error';
+      io.emit('status', 'Otra instancia activa. Espera a que libere.');
+      return;
+    }
+    clearDeployMarker();
   }
 
   botStarted = true;
+
+  // Heartbeat: actualizar lock cada 15s
+  const heartbeatInterval = setInterval(() => {
+    heartbeatLock();
+    // Tambien verificar si una instancia mas nueva nos reemplazo
+    if (checkDeployMarker()) {
+      log('Nueva instancia detectada. Apagando esta instancia...');
+      clearInterval(heartbeatInterval);
+      botStarted = false;
+      if (sock) { try { sock.end(undefined); } catch {} sock = null; }
+      releaseLock();
+      process.exit(0);
+    }
+  }, 15000);
 
   const authDir = AUTH_DIR;
   if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
@@ -273,6 +346,7 @@ async function startBot() {
       qrCodeDataURL = null;
       io.emit('status', 'WhatsApp conectado');
       io.emit('qr-code', '');
+      clearDeployMarker();
       log('WhatsApp CONECTADO');
     }
   });
