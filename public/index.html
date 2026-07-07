@@ -6,36 +6,59 @@
   <title>Bot WhatsApp - Panel</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a1a; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .container { text-align: center; max-width: 500px; padding: 40px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a1a; color: #fff; min-height: 100vh; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { text-align: center; padding: 20px 0; }
     .logo { font-size: 48px; margin-bottom: 10px; }
     h1 { font-size: 24px; margin-bottom: 8px; }
-    .subtitle { color: #888; margin-bottom: 30px; }
-    #qr-container { background: #fff; border-radius: 16px; padding: 20px; display: inline-block; min-width: 280px; min-height: 280px; display: flex; align-items: center; justify-content: center; }
+    .subtitle { color: #888; margin-bottom: 20px; }
+    .qr-section { text-align: center; margin-bottom: 20px; }
+    #qr-container { background: #fff; border-radius: 16px; padding: 20px; display: inline-block; min-width: 280px; min-height: 280px; display: flex; align-items: center; justify-content: center; position: relative; }
     #qr-container img { max-width: 260px; max-height: 260px; }
     #qr-placeholder { color: #666; font-size: 14px; }
-    .status-bar { margin-top: 24px; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; }
+    .qr-timer { margin-top: 10px; font-size: 12px; color: #888; }
+    .status-bar { margin-top: 16px; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; text-align: center; }
     .status-connecting { background: #1a1a2e; color: #ffd700; border: 1px solid #333; }
     .status-ready { background: #0a2e1a; color: #00ff88; border: 1px solid #00ff8833; }
     .status-error { background: #2e0a0a; color: #ff4444; border: 1px solid #ff444433; }
     .status-qr { background: #1a1a2e; color: #4488ff; border: 1px solid #4488ff33; }
     .pulse { animation: pulse 2s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-    .info { margin-top: 20px; color: #555; font-size: 12px; }
+    .logs-section { margin-top: 20px; }
+    .logs-title { font-size: 14px; color: #888; margin-bottom: 8px; }
+    #logs { background: #111; border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.6; }
+    .log-entry { color: #aaa; }
+    .log-entry.error { color: #ff4444; }
+    .log-entry.success { color: #00ff88; }
+    .log-entry.info { color: #4488ff; }
+    .info { margin-top: 16px; color: #555; font-size: 12px; text-align: center; }
+    .btn-refresh { margin-top: 10px; padding: 8px 16px; background: #333; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .btn-refresh:hover { background: #444; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">🤖</div>
-    <h1>Bot WhatsApp</h1>
-    <p class="subtitle">Agencia Nexus - Panel de Control</p>
+    <div class="header">
+      <div class="logo">🤖</div>
+      <h1>Bot WhatsApp</h1>
+      <p class="subtitle">Agencia Nexus - Panel de Control</p>
+    </div>
 
-    <div id="qr-container">
-      <p id="qr-placeholder" class="pulse">Esperando QR...</p>
+    <div class="qr-section">
+      <div id="qr-container">
+        <p id="qr-placeholder" class="pulse">Esperando QR...</p>
+      </div>
+      <p class="qr-timer" id="qr-timer"></p>
+      <button class="btn-refresh" onclick="refreshQR()">Refrescar QR</button>
     </div>
 
     <div id="status-bar" class="status-bar status-connecting pulse">
       Iniciando servidor...
+    </div>
+
+    <div class="logs-section">
+      <p class="logs-title">Logs en tiempo real:</p>
+      <div id="logs"></div>
     </div>
 
     <p class="info" id="server-info"></p>
@@ -47,49 +70,94 @@
     const qrContainer = document.getElementById('qr-container');
     const statusBar = document.getElementById('status-bar');
     const serverInfo = document.getElementById('server-info');
-    const qrPlaceholder = document.getElementById('qr-placeholder');
+    const logsDiv = document.getElementById('logs');
+    const qrTimer = document.getElementById('qr-timer');
+    let lastQRTime = null;
 
-    socket.on('qr-code', (dataURL) => {
-      qrContainer.innerHTML = `<img src="${dataURL}" alt="QR Code">`;
+    function addLog(text) {
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+      div.textContent = text;
+      logsDiv.appendChild(div);
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+      if (logsDiv.children.length > 100) logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    function showQR(dataURL) {
+      qrContainer.innerHTML = '<img src="' + dataURL + '" alt="QR Code">';
+      lastQRTime = Date.now();
       statusBar.className = 'status-bar status-qr';
       statusBar.textContent = 'Escanea el codigo QR con WhatsApp';
-    });
+    }
 
-    socket.on('status', (st) => {
-      switch (st) {
-        case 'starting':
-          statusBar.className = 'status-bar status-connecting pulse';
-          statusBar.textContent = 'Iniciando servidor...';
-          break;
-        case 'qr':
-          statusBar.className = 'status-bar status-qr';
-          statusBar.textContent = 'Escanea el codigo QR con WhatsApp';
-          break;
-        case 'ready':
-          statusBar.className = 'status-bar status-ready';
-          statusBar.textContent = 'WhatsApp conectado ✓';
-          qrContainer.innerHTML = '<p style="color: #00ff88; font-size: 48px;">✓</p>';
-          break;
-        case 'reconnecting':
-          statusBar.className = 'status-bar status-connecting pulse';
-          statusBar.textContent = 'Reconectando...';
-          break;
-        case 'error':
-          statusBar.className = 'status-bar status-error';
-          statusBar.textContent = 'Error - Revisa los logs';
-          break;
-        case 'logged_out':
-          statusBar.className = 'status-bar status-error';
-          statusBar.textContent = 'Sesion cerrada - Elimina auth_info/';
-          break;
-        default:
-          statusBar.className = 'status-bar status-connecting';
-          statusBar.textContent = st;
+    socket.on('qr-code', (dataURL) => {
+      if (dataURL) {
+        showQR(dataURL);
+        addLog('[QR] Nuevo codigo QR generado');
+      } else {
+        qrContainer.innerHTML = '<p style="color: #00ff88; font-size: 48px;">✓</p>';
       }
     });
 
+    socket.on('status', (st) => {
+      statusBar.textContent = st;
+      if (st === 'WhatsApp conectado') {
+        statusBar.className = 'status-bar status-ready';
+        qrContainer.innerHTML = '<p style="color: #00ff88; font-size: 48px;">✓</p>';
+        addLog('[OK] WhatsApp CONECTADO');
+      } else if (st.includes('Error') || st.includes('error') || st.includes('cerrada')) {
+        statusBar.className = 'status-bar status-error';
+        addLog('[ERROR] ' + st);
+      } else if (st.includes('Reconectando')) {
+        statusBar.className = 'status-bar status-connecting pulse';
+        addLog('[RECONNECT] ' + st);
+      } else {
+        statusBar.className = 'status-bar status-connecting pulse';
+      }
+    });
+
+    // Poll QR via REST (fallback for when Socket.IO fails)
+    async function refreshQR() {
+      try {
+        const res = await fetch('/api/qr');
+        const data = await res.json();
+        if (data.qr) {
+          showQR(data.qr);
+          addLog('[QR] QR cargado via REST');
+        }
+        statusBar.textContent = data.status || 'Desconocido';
+      } catch (e) {
+        addLog('[ERROR] No se pudo cargar QR: ' + e.message);
+      }
+    }
+
+    // Poll QR every 15 seconds as fallback
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/qr');
+        const data = await res.json();
+        if (data.qr && data.qr !== qrContainer.querySelector('img')?.src) {
+          showQR(data.qr);
+        }
+      } catch (e) {}
+    }, 15000);
+
+    // Update QR timer
+    setInterval(() => {
+      if (lastQRTime) {
+        const elapsed = Math.floor((Date.now() - lastQRTime) / 1000);
+        const remaining = Math.max(0, 25 - elapsed);
+        qrTimer.textContent = remaining > 0 ? `QR expira en ${remaining}s` : 'QR expirado - refrescando...';
+      }
+    }, 1000);
+
+    // Load initial logs
+    fetch('/api/logs').then(r => r.json()).then(data => {
+      if (data.logs) data.logs.forEach(l => addLog(l));
+    }).catch(() => {});
+
     fetch('/status').then(r => r.json()).then(data => {
-      serverInfo.textContent = `Node ${data.node} | ${data.platform} | ${data.memory} | Uptime: ${Math.round(data.uptime)}s`;
+      serverInfo.textContent = 'Node ' + data.node + ' | ' + data.platform + ' | ' + data.memory + ' | Uptime: ' + Math.round(data.uptime) + 's';
     });
   </script>
 </body>

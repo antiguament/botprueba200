@@ -133,6 +133,14 @@ app.get('/status', (req, res) => {
   });
 });
 
+app.get('/api/qr', (req, res) => {
+  res.json({ qr: qrCodeDataURL, status });
+});
+
+app.get('/api/logs', (req, res) => {
+  res.json({ logs: logs.slice(-50) });
+});
+
 // ===== SOCKET.IO =====
 io.on('connection', (socket) => {
   log('Cliente web conectado: ' + socket.id);
