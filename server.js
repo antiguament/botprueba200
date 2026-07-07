@@ -280,9 +280,11 @@ async function startBot() {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('messages.upsert', async (m) => {
+    log(`[DEBUG] messages.upsert type=${m.type} count=${m.messages.length}`);
     if (m.type !== 'notify') return;
 
     for (const msg of m.messages) {
+      log(`[DEBUG] msg fromMe=${msg.key.fromMe} jid=${msg.key.remoteJid} pushName=${msg.pushName}`);
       if (msg.key.fromMe) continue;
       if (!msg.key.remoteJid || !msg.key.remoteJid.endsWith('@c.us')) continue;
 
@@ -300,6 +302,7 @@ async function startBot() {
       log(`Mensaje de ${name} (${number}): ${body}`);
 
       const autoReply = getAutoReply(body);
+      log(`[DEBUG] autoReply=${autoReply ? 'SI' : 'NO'} para "${body}"`);
       if (autoReply) {
         try {
           await sock.sendMessage(from, { text: autoReply });
