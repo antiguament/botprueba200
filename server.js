@@ -45,13 +45,27 @@ const LOCK_FILE = path.join(__dirname, '.bot.lock');
 function acquireLock() {
   if (fs.existsSync(LOCK_FILE)) {
     try {
-      const pid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+      const content = fs.readFileSync(LOCK_FILE, 'utf8').trim();
+      const pid = parseInt(content);
+      const stat = fs.statSync(LOCK_FILE);
+      const lockAge = Date.now() - stat.mtimeMs;
+
       if (pid === process.pid) return true;
-      process.kill(pid, 0);
-      log(`Lock: proceso ${pid} activo. Esta instancia NO arrancara WhatsApp.`);
-      return false;
+
+      if (lockAge > 120000) {
+        log('Lock: stale (>2min). Limpiando automaticamente.');
+        try { fs.unlinkSync(LOCK_FILE); } catch {}
+      } else {
+        try {
+          process.kill(pid, 0);
+          log(`Lock: proceso ${pid} activo. Esta instancia NO arrancara WhatsApp.`);
+          return false;
+        } catch {
+          log('Lock: proceso anterior muerto. Limpiando lock.');
+          try { fs.unlinkSync(LOCK_FILE); } catch {}
+        }
+      }
     } catch {
-      log('Lock: proceso anterior muerto. Limpiando lock.');
       try { fs.unlinkSync(LOCK_FILE); } catch {}
     }
   }
