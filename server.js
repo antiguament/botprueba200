@@ -360,7 +360,7 @@ async function startBot() {
     for (const msg of m.messages) {
       log(`[DEBUG] msg fromMe=${msg.key.fromMe} jid=${msg.key.remoteJid} pushName=${msg.pushName}`);
       if (msg.key.fromMe) continue;
-      if (!msg.key.remoteJid || !msg.key.remoteJid.endsWith('@c.us')) continue;
+      if (!msg.key.remoteJid || (!msg.key.remoteJid.endsWith('@c.us') && !msg.key.remoteJid.endsWith('@lid'))) continue;
 
       const from = msg.key.remoteJid;
       const number = normalizeNumber(from);
