@@ -41,7 +41,34 @@ const MIN_RECONNECT_INTERVAL = 10000;
 const AUTH_DIR = path.join(__dirname, 'auth_info');
 const LOCK_FILE = path.join(__dirname, '.bot.lock');
 const DEPLOY_MARKER = path.join(__dirname, '.deploy.marker');
+const CONVERSATIONS_PATH = path.join(__dirname, 'conversations.json');
 const MY_START_TIME = Date.now();
+
+// ===== CONVERSATION HISTORY =====
+let conversations = {};
+
+function loadConversations() {
+  try { conversations = JSON.parse(fs.readFileSync(CONVERSATIONS_PATH, 'utf8')); }
+  catch { conversations = {}; }
+}
+
+function saveConversations() {
+  try { fs.writeFileSync(CONVERSATIONS_PATH, JSON.stringify(conversations, null, 2), 'utf8'); }
+  catch (e) { log('Error guardando conversaciones: ' + e.message); }
+}
+
+function addToHistory(number, role, body) {
+  if (!conversations[number]) conversations[number] = [];
+  conversations[number].push({ role, body, ts: new Date().toISOString() });
+  if (conversations[number].length > 50) conversations[number] = conversations[number].slice(-50);
+  saveConversations();
+}
+
+function getHistory(number, lastN = 5) {
+  return (conversations[number] || []).slice(-lastN);
+}
+
+loadConversations();
 
 // ===== LOCK FILE =====
 function acquireLock() {
@@ -143,34 +170,80 @@ function createMessageId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-// ===== AUTO-REPLY =====
-function getAutoReply(message) {
+// ===== AUTO-REPLY CON CONTEXTO =====
+function getAutoReply(message, number) {
   const lower = message.toLowerCase().trim();
-  if (/^(hola|buenos dias|buenas tardes|buenas noches|hey|que tal|saludos|hello|hi)$/i.test(lower))
+  const history = getHistory(number, 5);
+  const prevMessages = history.map(h => `${h.role}: ${h.body}`).join('\n');
+
+  // Detectar intención del usuario
+  const isGreeting = /^(hola|buenos dias|buenas tardes|buenas noches|hey|que tal|saludos|hello|hi)$/i.test(lower);
+  const isFarewell = /^(adios|hasta luego|chao|nos vemos|bye|gracias|muchas gracias)$/i.test(lower);
+  const isPrice = /(precio|precios|plan|planes|cuesta|costo|cuanto)/i.test(lower);
+  const isService = /(servicio|servicios|hacen|que hacen|que ofrecen)/i.test(lower);
+  const isWeb = /(pagina|web|sitio|landing|desarrollo)/i.test(lower);
+  const isShop = /(tienda|ecommerce|vender|productos)/i.test(lower);
+  const isWhatsApp = /(whatsapp|api|integracion)/i.test(lower);
+  const isHosting = /(hosting|servidor|dominio)/i.test(lower);
+  const isSupport = /(soporte|ayuda|problema)/i.test(lower);
+  const isDemo = /(demo|muestra|ejemplo|ver)/i.test(lower);
+  const isPayment = /(pago|pagar|factura|comprar)/i.test(lower);
+  const isWho = /(quien eres|que eres|tu nombre)/i.test(lower);
+  const isBusiness = /(negocio|empresa|emprendimiento)/i.test(lower);
+
+  // Detectar si ya se habló de algo antes
+  const talkedPrices = prevMessages.toLowerCase().includes('precio') || prevMessages.toLowerCase().includes('plan');
+  const talkedServices = prevMessages.toLowerCase().includes('servicio') || prevMessages.toLowerCase().includes('ofrecemos');
+
+  // Respuestas con contexto
+  if (isGreeting) {
+    if (history.length > 2) {
+      return 'Hola de nuevo! En que te puedo ayudar?';
+    }
     return 'Hola! Bienvenido a Agencia Nexus. Como puedo ayudarte hoy?';
-  if (/^(adios|hasta luego|chao|nos vemos|bye|gracias|muchas gracias)$/i.test(lower))
+  }
+
+  if (isFarewell) {
+    if (talkedPrices) return 'Gracias por tu interes! Cualquier pregunta sobre los planes, escribeme. Hasta pronto!';
     return 'Gracias por escribirnos! Estamos aqui cuando nos necesites.';
-  if (/(precio|precios|plan|planes|cuesta|costo|cuanto)/i.test(lower))
+  }
+
+  if (isPrice) {
+    if (talkedPrices) {
+      const lastPrice = [...history].reverse().find(h => h.body.toLowerCase().includes('plan'));
+      return 'Vi que preguntaste sobre planes. Te recuerdo:\n\nEssential: $290K COP\nStart: $490K COP (popular)\nPRO: $890K COP\nEnterprise: $1.590K COP\n\nAlguno te llamo la atencion?';
+    }
     return 'Tenemos diferentes planes:\n\nEssential: $290K COP\nStart: $490K COP (popular)\nPRO: $890K COP (mas vendido)\nEnterprise: $1.590K COP\n\nCual te interesa?';
-  if (/(servicio|servicios|hacen|que hacen|que ofrecen)/i.test(lower))
+  }
+
+  if (isService) {
+    if (talkedServices) return 'Ya te mencione nuestros servicios. Quieres que profundice en alguno en particular?';
     return 'Ofrecemos:\n- Paginas web profesional\n- Tiendas online\n- Integracion WhatsApp\n- SEO y marketing digital\n- Soporte 24/7\n\nQue necesitas para tu negocio?';
-  if (/(pagina|web|sitio|landing|desarrollo)/i.test(lower))
-    return 'Desarrollamos paginas web profesionales, tiendas online y landing pages. Que tipo de negocio tienes?';
-  if (/(tienda|ecommerce|vender|productos)/i.test(lower))
-    return 'Creamos tiendas online con catalogo, carrito y pasarela de pago. El plan Start o PRO son ideales. Cuantos productos manejas?';
-  if (/(whatsapp|api|integracion)/i.test(lower))
-    return 'Integramos WhatsApp Business API para mensajes automaticos y ventas por chat. El plan PRO la incluye.';
-  if (/(hosting|servidor|dominio)/i.test(lower))
-    return 'Todos nuestros planes incluyen hosting premium, dominio .com y SSL por 12 meses.';
-  if (/(soporte|ayuda|problema)/i.test(lower))
-    return 'Nuestro soporte esta disponible 24/7 VIP. En que puedo ayudarte?';
-  if (/(demo|muestra|ejemplo|ver)/i.test(lower))
-    return 'Tenemos demos en n1nexus.com. Que tipo de negocio tienes? Te muestro uno similar!';
-  if (/(pago|pagar|factura|comprar)/i.test(lower))
-    return 'Aceptamos transferencia, PSE, tarjeta y Nequi. El pago es unico sin suscripciones.';
-  if (/(quien eres|que eres|tu nombre)/i.test(lower))
-    return 'Soy NEXUS, tu asistente virtual de Agencia Nexus. Estoy aqui para ayudarte!';
-  return null;
+  }
+
+  if (isWeb) return 'Desarrollamos paginas web profesionales, tiendas online y landing pages. Que tipo de negocio tienes?';
+  if (isShop) return 'Creamos tiendas online con catalogo, carrito y pasarela de pago. El plan Start o PRO son ideales. Cuantos productos manejas?';
+  if (isWhatsApp) return 'Integramos WhatsApp Business API para mensajes automaticos y ventas por chat. El plan PRO la incluye.';
+  if (isHosting) return 'Todos nuestros planes incluyen hosting premium, dominio .com y SSL por 12 meses.';
+  if (isSupport) return 'Nuestro soporte esta disponible 24/7 VIP. En que puedo ayudarte?';
+  if (isDemo) return 'Tenemos demos en n1nexus.com. Que tipo de negocio tienes? Te muestro uno similar!';
+  if (isPayment) return 'Aceptamos transferencia, PSE, tarjeta y Nequi. El pago es unico sin suscripciones.';
+  if (isWho) return 'Soy NEXUS, tu asistente virtual de Agencia Nexus. Estoy aqui para ayudarte!';
+  if (isBusiness) return 'Que bueno! Te puedo ayudar a llevar tu negocio al siguiente nivel con presencia digital. Que tipo es?';
+
+  // Detectar preguntas de seguimiento
+  if (/(cuanto|cuesta|vale|price|cost)/i.test(lower) && talkedPrices) {
+    return 'Segun lo que vimos, el plan Start ($490K COP) es el mas popular. Incluye pagina web + tienda online + hosting. Te interesa?';
+  }
+
+  if (/(mas info|detalles|contame|cuentalo|explicame)/i.test(lower)) {
+    if (talkedPrices) return 'Claro! Que plan te interesa? Te puedo dar todos los detalles.';
+    if (talkedServices) return 'Cual de nuestros servicios te interesa mas? Te cuento los detalles.';
+    return 'Que te gustaria saber? Puedo contarte sobre nuestros planes, servicios o hacer un demo personalizado.';
+  }
+
+  // Respuesta por defecto: preguntar qué necesita
+  return 'Entiendo. Como te puedo ayudar? Puedo contarte sobre nuestros planes, servicios o hacer un demo personalizado.';
 }
 
 // ===== ROUTES =====
@@ -194,6 +267,15 @@ app.get('/api/qr', (req, res) => {
 
 app.get('/api/logs', (req, res) => {
   res.json({ logs: logs.slice(-50) });
+});
+
+app.get('/api/conversations', (req, res) => {
+  res.json(conversations);
+});
+
+app.get('/api/conversations/:number', (req, res) => {
+  const num = normalizeNumber(req.params.number);
+  res.json(conversations[num] || []);
 });
 
 // ===== SOCKET.IO =====
@@ -375,11 +457,15 @@ async function startBot() {
 
       log(`Mensaje de ${name} (${number}): ${body}`);
 
-      const autoReply = getAutoReply(body);
+      // Guardar en historial
+      addToHistory(number, 'user', body);
+
+      const autoReply = getAutoReply(body, number);
       log(`[DEBUG] autoReply=${autoReply ? 'SI' : 'NO'} para "${body}"`);
       if (autoReply) {
         try {
           await sock.sendMessage(from, { text: autoReply });
+          addToHistory(number, 'bot', autoReply);
           log(`Auto-respuesta a ${number}: ${autoReply}`);
         } catch (err) {
           log(`Error auto-respuesta: ${err.message}`);
