@@ -3,3 +3,4 @@ auth_info/
 .env
 *.log
 .bot.lock
+.deploy.marker
