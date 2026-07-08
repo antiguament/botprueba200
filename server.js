@@ -6,6 +6,7 @@ const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = r
 const qrcode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -69,6 +70,79 @@ function getHistory(number, lastN = 5) {
 }
 
 loadConversations();
+
+// ===== MISTRAL AI =====
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
+const MISTRAL_API_URL = 'https://api.mistral.ai/v1/chat/completions';
+const BOT_KNOWLEDGE_PATH = path.join(__dirname, 'bot-knowledge.json');
+
+let cachedKnowledge = null;
+let knowledgeLastLoaded = 0;
+const KNOWLEDGE_CACHE_TTL = 60000;
+
+function loadKnowledge() {
+  const now = Date.now();
+  if (!cachedKnowledge || (now - knowledgeLastLoaded) > KNOWLEDGE_CACHE_TTL) {
+    try {
+      cachedKnowledge = JSON.parse(fs.readFileSync(BOT_KNOWLEDGE_PATH, 'utf8'));
+      knowledgeLastLoaded = now;
+    } catch (err) {
+      console.error('Error cargando bot-knowledge.json:', err.message);
+      if (!cachedKnowledge) cachedKnowledge = {};
+    }
+  }
+  return cachedKnowledge;
+}
+
+function buildSystemPrompt() {
+  const k = loadKnowledge();
+  const customPrompt = k.nexus_system_prompt || `Eres "NEXUS", el asistente virtual de ventas de Agencia Nexus.
+Responde en español de Colombia, con tono profesional, cercano, claro y orientado a ventas.
+Tu objetivo es ayudar a prospectos y clientes a encontrar la solución digital perfecta para su negocio.`;
+  const rules = `No inventes datos que no estén en la base de conocimiento.
+Si falta información, invita a escribir por WhatsApp para asesoría personalizada.
+Mantén respuestas breves para WhatsApp, idealmente entre 1 y 4 líneas, salvo que el usuario pida más detalle.`;
+
+  const plans = k.catalogos_planes ? JSON.stringify(k.catalogos_planes, null, 2) : '';
+  const faq = k.preguntas_frecuentes ? JSON.stringify(k.preguntas_frecuentes) : '';
+
+  return `${customPrompt}\n\n${rules}\n\nPlanes:\n${plans}\n\nPreguntas frecuentes:\n${faq}`;
+}
+
+async function getMistralReply(message, number) {
+  const history = getHistory(number, 6);
+  const messages = [
+    { role: 'system', content: buildSystemPrompt() }
+  ];
+
+  for (const h of history) {
+    messages.push({
+      role: h.role === 'user' ? 'user' : 'assistant',
+      content: h.body
+    });
+  }
+
+  messages.push({ role: 'user', content: message });
+
+  try {
+    const response = await axios.post(MISTRAL_API_URL, {
+      model: 'mistral-tiny',
+      messages,
+      max_tokens: 300
+    }, {
+      headers: {
+        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 25000
+    });
+
+    return response.data.choices[0].message.content.trim();
+  } catch (err) {
+    log(`Error Mistral AI: ${err.message}`);
+    return null;
+  }
+}
 
 // ===== LOCK FILE =====
 function acquireLock() {
@@ -458,14 +532,22 @@ async function startBot() {
       // Guardar en historial
       addToHistory(number, 'user', body);
 
-      const autoReply = getAutoReply(body, number);
+      // Intentar Mistral AI, si falla usar keywords
+      let autoReply = null;
+      if (MISTRAL_API_KEY) {
+        autoReply = await getMistralReply(body, number);
+      }
+      if (!autoReply) {
+        autoReply = getAutoReply(body, number);
+      }
+
       if (autoReply) {
         try {
           await sock.sendMessage(from, { text: autoReply });
           addToHistory(number, 'bot', autoReply);
-          log(`Auto-respuesta a ${number}: ${autoReply}`);
+          log(`Respuesta a ${number}: ${autoReply.substring(0, 80)}...`);
         } catch (err) {
-          log(`Error auto-respuesta: ${err.message}`);
+          log(`Error respuesta: ${err.message}`);
         }
       }
     }
